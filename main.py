@@ -17,7 +17,7 @@ def reminder_loop():
 # Background email fetch & AI draft
 def email_loop():
     while True:
-        for email in fetch_outlook() + fetch_zoho():
+        for email in fetch_emails() + fetch_zoho():
             subject = email.get("subject")
             body = email.get("body", {}).get("content", "")
             context = "\n".join(query_memory(body))
