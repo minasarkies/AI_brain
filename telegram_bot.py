@@ -1,72 +1,115 @@
-import requests
+import os
 import time
-import os
+import requests
 from openai import OpenAI
-import os
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 from memory import add_memory, query_memory
-from reminders import add_reminder
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+
+if not TELEGRAM_TOKEN:
+    raise ValueError("Missing TELEGRAM_BOT_TOKEN in environment variables")
+if not OPENAI_KEY:
+    raise ValueError("Missing OPENAI_API_KEY in environment variables")
+
+client = OpenAI(api_key=OPENAI_KEY)
 
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-last_update_id = None
+# Persist offset in memory (in-process). Optional: persist to file/DB later.
+_last_update_id = None
 
-def send_message(chat_id, text):
+# Keep replies snappy
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+MAX_MEMORY_SNIPPETS = 5
+OPENAI_TIMEOUT_SECONDS = 25
+
+
+def _flatten_docs(docs):
+    # Chroma often returns nested lists: [[...]]
+    if docs and isinstance(docs[0], list):
+        return docs[0]
+    return docs or []
+
+
+def send_message(chat_id: int, text: str):
     requests.post(
         f"{API_URL}/sendMessage",
-        json={"chat_id": chat_id, "text": text}
+        json={"chat_id": chat_id, "text": text},
+        timeout=15,
     )
 
+
 def start_telegram():
-    global last_update_id
-    print("Telegram bot started")
+    global _last_update_id
+
+    print("Telegram bot started (polling mode)")
 
     while True:
-        params = {"timeout": 30}
-        if last_update_id:
-            params["offset"] = last_update_id + 1
+        try:
+            params = {"timeout": 30}
+            if _last_update_id is not None:
+                params["offset"] = _last_update_id + 1
 
-        resp = requests.get(f"{API_URL}/getUpdates", params=params).json()
+            r = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
+            data = r.json()
 
-        for update in resp.get("result", []):
-            last_update_id = update["update_id"]
+            for update in data.get("result", []):
+                _last_update_id = update["update_id"]
 
-            if "message" not in update:
-                continue
+                msg = update.get("message")
+                if not msg:
+                    continue
 
-            msg = update["message"]
-            chat_id = msg["chat"]["id"]
-            text = msg.get("text", "")
+                chat_id = msg["chat"]["id"]
+                user_text = msg.get("text", "").strip()
 
-            if not text:
-                continue
+                # Ignore non-text messages for now
+                if not user_text:
+                    continue
 
-            # Memory context
-            memories = query_memory(text)
-            flat = memories[0] if memories and isinstance(memories[0], list) else memories
-            context = "\n".join(query_memory(text))
+                # Quick debug log so you can confirm real content is received
+                print(f"[TG] chat_id={chat_id} text={user_text!r}")
 
-            prompt = f"""
-Relevant memory:
-{context}
+                # Retrieve memory based on the user text
+                mem_docs = _flatten_docs(query_memory(user_text, n_results=MAX_MEMORY_SNIPPETS))
+                mem_text = "\n".join(mem_docs[:MAX_MEMORY_SNIPPETS]).strip()
 
-User message:
-{text}
-"""
+                system = (
+                    "You are Mina's personal AI brain.\n"
+                    "Be direct, concise, and action-oriented.\n"
+                    "Do not repeat an intro message. Answer the user's latest message.\n"
+                    "If you need clarification, ask ONE short question.\n"
+                )
 
-            response = client.chat.completions.create(
-                model="gpt-4.1-mini",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            reply = response.choices[0].message.content
-            
-            add_memory(text, {"type": "telegram_user"})
-            add_memory(reply, {"type": "telegram_ai"})
+                # IMPORTANT: include the real user text here; this is where many bugs occur
+                messages = [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": f"Relevant memory:\n{mem_text}\n\nUser message:\n{user_text}"},
+                ]
 
-            send_message(chat_id, reply)
+                # Call OpenAI
+                resp = client.chat.completions.create(
+                    model=MODEL,
+                    messages=messages,
+                    temperature=0.4,
+                    timeout=OPENAI_TIMEOUT_SECONDS,
+                )
+                reply = (resp.choices[0].message.content or "").strip()
 
-        time.sleep(1)
+                # Fallback if empty
+                if not reply:
+                    reply = "I received your message. Please rephrase it in one sentence."
+
+                # Store interaction in memory (optional)
+                add_memory(user_text, {"type": "telegram_user", "chat_id": str(chat_id)})
+                add_memory(reply, {"type": "telegram_ai", "chat_id": str(chat_id)})
+
+                send_message(chat_id, reply)
+
+        except Exception as e:
+            # Never kill the bot; log and continue
+            print(f"[Telegram loop error] {e}")
+
+        time.sleep(0.5)
