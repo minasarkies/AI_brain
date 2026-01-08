@@ -10,4 +10,8 @@ def add_memory(document: str, meta: dict = {}):
 
 def query_memory(query: str, n_results: int = 5):
     results = memory.query(query_texts=[query], n_results=n_results)
-    return results["documents"]
+    docs = results.get("documents", [])
+    # Chroma returns documents as a nested list: [[...]]
+    if docs and isinstance(docs[0], list):
+        return docs[0]
+    return docs

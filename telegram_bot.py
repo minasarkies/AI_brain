@@ -45,7 +45,8 @@ def start_telegram():
 
             # Memory context
             memories = query_memory(text)
-            context = "\n".join(memories)
+            flat = memories[0] if memories and isinstance(memories[0], list) else memories
+            context = "\n".join(query_memory(text))
 
             prompt = f"""
 Relevant memory:
