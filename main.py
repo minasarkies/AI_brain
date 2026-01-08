@@ -47,14 +47,14 @@ Draft a professional, concise reply.
 
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
     )
+    reply = response.choices[0].message.content
 
-    draft_reply = response.choices[0].message["content"]
 
     # Store in memory
     add_memory(body, {"type": "email_received", "subject": subject})
-    add_memory(draft_reply, {"type": "email_draft", "subject": subject})
+    add_memory(reply, {"type": "email_draft", "subject": subject})
 
 
 def start_email_loop():

@@ -10,7 +10,6 @@ from memory import add_memory, query_memory
 from reminders import add_reminder
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
@@ -64,8 +63,7 @@ User message:
                 messages=[{"role": "user", "content": prompt}],
             )
             reply = response.choices[0].message.content
-
-
+            
             add_memory(text, {"type": "telegram_user"})
             add_memory(reply, {"type": "telegram_ai"})
 
