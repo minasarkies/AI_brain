@@ -1,35 +1,78 @@
-from fastapi import FastAPI
-from memory import add_memory, query_memory
-from reminders import check_due_reminders
-from outlook_imap_smtp import fetch_emails, send_email
-from zoho_helper import fetch_emails as fetch_zoho
-import openai, threading, time, os
+import os
+import time
+import openai
 
-app = FastAPI()
+from memory import add_memory, query_memory
+from outlook_imap_smtp import fetch_emails
+
+# Load OpenAI key
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Background reminders
-def reminder_loop():
-    while True:
-        check_due_reminders()
-        time.sleep(60)
+EMAIL_POLL_INTERVAL = 300  # seconds (5 minutes)
 
-# Background email fetch & AI draft
-def email_loop():
-    while True:
-        for email in fetch_emails() + fetch_zoho():
-            subject = email.get("subject")
-            body = email.get("body", {}).get("content", "")
-            context = "\n".join(query_memory(body))
-            prompt = f"Relevant memory:\n{context}\n\nEmail content:\n{body}"
-            response = openai.ChatCompletion.create(
-                model="gpt-4.1-mini",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            draft_reply = response.choices[0].message["content"]
-            add_memory(body, meta={"type": "email_received"})
-            add_memory(draft_reply, meta={"type": "email_draft"})
-        time.sleep(300)
 
-threading.Thread(target=reminder_loop, daemon=True).start()
-threading.Thread(target=email_loop, daemon=True).start()
+def process_email(email_obj):
+    """
+    Takes a single email object and generates an AI draft reply.
+    Stores both email content and AI draft into memory.
+    """
+
+    subject = email_obj.get("subject", "")
+    body = email_obj.get("body", {}).get("content", "")
+
+    if not body:
+        return
+
+    # Retrieve relevant memory
+    memory_context = query_memory(body)
+    memory_text = "\n".join(memory_context)
+
+    prompt = f"""
+You are my personal AI assistant.
+
+Relevant memory:
+{memory_text}
+
+Incoming email:
+Subject: {subject}
+
+Body:
+{body}
+
+Draft a professional, concise reply.
+"""
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    draft_reply = response.choices[0].message["content"]
+
+    # Store in memory
+    add_memory(body, {"type": "email_received", "subject": subject})
+    add_memory(draft_reply, {"type": "email_draft", "subject": subject})
+
+
+def start_email_loop():
+    """
+    Background loop:
+    - Polls Outlook inbox via IMAP
+    - Generates AI draft replies
+    - Stores everything in memory
+    """
+
+    print("📧 Email loop started (IMAP/SMTP)")
+
+    while True:
+        try:
+            emails = fetch_emails(top=5)
+
+            for email_obj in emails:
+                process_email(email_obj)
+
+        except Exception as e:
+            # Never crash Railway
+            print(f"[Email loop error] {e}")
+
+        time.sleep(EMAIL_POLL_INTERVAL)

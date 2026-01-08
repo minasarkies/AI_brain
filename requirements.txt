@@ -3,5 +3,5 @@ uvicorn
 openai
 chromadb
 sqlite-utils
-playwright
 python-dotenv
+requests
