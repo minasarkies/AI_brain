@@ -2,6 +2,8 @@ import os
 import time
 import requests
 from openai import OpenAI
+import datetime
+from reminders import add_reminder
 
 from memory import add_memory, query_memory
 
@@ -54,6 +56,26 @@ def start_telegram():
 
             r = requests.get(f"{API_URL}/getUpdates", params=params, timeout=35)
             data = r.json()
+            # --- COMMAND: /remind <seconds> <text> ---
+            # Examples:
+            # /remind 30 test this
+            # /remind 3600 follow up with Sam
+            if user_text.lower().startswith("/remind"):
+                parts = user_text.split(maxsplit=2)
+                if len(parts) < 3:
+                    send_message(chat_id, "Usage: /remind <seconds> <message>\nExample: /remind 30 test this")
+                    continue
+
+                try:
+                    seconds = int(parts[1])
+                    reminder_text = parts[2].strip()
+                    due_at = (datetime.datetime.utcnow() + datetime.timedelta(seconds=seconds)).isoformat()
+
+                    add_reminder(reminder_text, due_at)
+                    send_message(chat_id, f"Reminder set for {seconds} seconds from now: {reminder_text}")
+                except ValueError:
+                    send_message(chat_id, "Seconds must be a number. Example: /remind 30 test this")
+                continue
 
             for update in data.get("result", []):
                 _last_update_id = update["update_id"]
