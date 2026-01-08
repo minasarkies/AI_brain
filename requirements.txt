@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+openai
+chromadb
+sqlite-utils
+playwright
