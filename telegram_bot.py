@@ -1,7 +1,10 @@
 import requests
 import time
 import os
-import openai
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 from memory import add_memory, query_memory
 from reminders import add_reminder
@@ -56,12 +59,12 @@ User message:
 {text}
 """
 
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4.1-mini",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
             )
+            reply = response.choices[0].message.content
 
-            reply = response.choices[0].message["content"]
 
             add_memory(text, {"type": "telegram_user"})
             add_memory(reply, {"type": "telegram_ai"})

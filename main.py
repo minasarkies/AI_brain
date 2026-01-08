@@ -1,12 +1,15 @@
 import os
 import time
-import openai
+from openai import OpenAI
+import os
+
 
 from memory import add_memory, query_memory
 from outlook_imap_smtp import fetch_emails
 
 # Load OpenAI key
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 EMAIL_POLL_INTERVAL = 300  # seconds (5 minutes)
 
@@ -42,7 +45,7 @@ Body:
 Draft a professional, concise reply.
 """
 
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[{"role": "user", "content": prompt}]
     )
