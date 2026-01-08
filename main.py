@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from memory import add_memory, query_memory
 from reminders import check_due_reminders
-from outlook_helper import fetch_emails as fetch_outlook
+from outlook_imap_smtp import fetch_emails, send_email
 from zoho_helper import fetch_emails as fetch_zoho
 import openai, threading, time, os
 
