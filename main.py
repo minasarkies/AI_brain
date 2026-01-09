@@ -1,81 +1,69 @@
 import os
 import time
 from openai import OpenAI
-import os
-
 
 from memory import add_memory, query_memory
-from outlook_imap_smtp import fetch_emails
 
-# Load OpenAI key
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# If you are using Zoho only, import Zoho here.
+# If you want email disabled for now, you can comment out the import and loop usage.
+from zoho_helper import fetch_emails as fetch_zoho
 
+OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_KEY:
+    raise ValueError("Missing OPENAI_API_KEY")
 
-EMAIL_POLL_INTERVAL = 300  # seconds (5 minutes)
+client = OpenAI(api_key=OPENAI_KEY)
 
-
-def process_email(email_obj):
-    """
-    Takes a single email object and generates an AI draft reply.
-    Stores both email content and AI draft into memory.
-    """
-
-    subject = email_obj.get("subject", "")
-    body = email_obj.get("body", {}).get("content", "")
-
-    if not body:
-        return
-
-    # Retrieve relevant memory
-    memory_context = query_memory(body)
-    memory_text = "\n".join(memory_context)
-
-    prompt = f"""
-You are my personal AI assistant.
-
-Relevant memory:
-{memory_text}
-
-Incoming email:
-Subject: {subject}
-
-Body:
-{body}
-
-Draft a professional, concise reply.
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    reply = response.choices[0].message.content
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+EMAIL_POLL_INTERVAL = int(os.getenv("EMAIL_POLL_INTERVAL", "300"))
 
 
-    # Store in memory
-    add_memory(body, {"type": "email_received", "subject": subject})
-    add_memory(reply, {"type": "email_draft", "subject": subject})
+def start_email_loop() -> None:
+    print("Email loop started (Zoho)")
 
-
-def start_email_loop():
-    """
-    Background loop:
-    - Polls Outlook inbox via IMAP
-    - Generates AI draft replies
-    - Stores everything in memory
-    """
-
-    print("📧 Email loop started (IMAP/SMTP)")
+    namespace = "email:default"
 
     while True:
         try:
-            emails = fetch_emails(top=5)
+            emails = fetch_zoho(top=5) or []
 
             for email_obj in emails:
-                process_email(email_obj)
+                subject = email_obj.get("subject", "")
+                body = ""
+
+                # Zoho helper formats may vary; this keeps it defensive.
+                if isinstance(email_obj.get("body"), dict):
+                    body = email_obj.get("body", {}).get("content", "") or ""
+                else:
+                    body = email_obj.get("content", "") or email_obj.get("summary", "") or ""
+
+                if not body.strip():
+                    continue
+
+                mem = query_memory(body, namespace=namespace, n_results=5)
+                mem_text = "\n".join(mem).strip()
+
+                system = "Draft a professional, concise email reply."
+                prompt = f"Relevant memory:\n{mem_text}\n\nEmail subject:\n{subject}\n\nEmail body:\n{body}"
+
+                resp = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.4,
+                    timeout=25,
+                )
+
+                draft = (resp.choices[0].message.content or "").strip()
+                if not draft:
+                    continue
+
+                add_memory(body, {"type": "email_received", "namespace": namespace, "subject": subject})
+                add_memory(draft, {"type": "email_draft", "namespace": namespace, "subject": subject})
 
         except Exception as e:
-            # Never crash Railway
             print(f"[Email loop error] {e}")
 
         time.sleep(EMAIL_POLL_INTERVAL)

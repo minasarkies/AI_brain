@@ -1,4 +1,3 @@
-# links.py
 import sqlite3
 import uuid
 
