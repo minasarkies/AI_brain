@@ -316,7 +316,13 @@ def start_telegram() -> None:
                 parsed = try_parse_reminder(user_text, tzname)
                 if parsed:
                     due_at, reminder_text, local_dt_str = parsed
-                    add_reminder(chat_id=chat_id, text=reminder_text, due_at=due_at)
+                    add_reminder(
+                        chat_id=chat_id,
+                        text=reminder_text,
+                        due_at=due_at,
+                        timezone=tzname,
+                        due_local=local_dt_str,
+                    )
                     send_message(chat_id, f"Confirmed. I’ll remind you at {local_dt_str}.\nReminder: {reminder_text}")
                     continue
 

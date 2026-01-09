@@ -26,9 +26,8 @@ def _get_columns(table: str) -> set[str]:
 
 def _ensure_schema() -> None:
     """
-    Create the reminders table if it doesn't exist.
-    If it exists (older versions), migrate it forward by adding missing columns.
-    This prevents 'no such column: chat_id' errors.
+    Create table if missing; otherwise migrate forward by adding missing columns.
+    This prevents 'no such column' errors on existing brain.db files.
     """
     if not _table_exists("reminders"):
         cursor.execute("""
@@ -36,7 +35,9 @@ def _ensure_schema() -> None:
             id INTEGER PRIMARY KEY,
             chat_id TEXT NOT NULL,
             text TEXT NOT NULL,
-            due_at TEXT NOT NULL,
+            due_at TEXT NOT NULL,          -- UTC ISO string (naive)
+            timezone TEXT,                 -- IANA tz name (e.g., Asia/Dubai)
+            due_local TEXT,                -- local display string
             sent INTEGER DEFAULT 0
         )
         """)
@@ -45,35 +46,48 @@ def _ensure_schema() -> None:
 
     cols = _get_columns("reminders")
 
-    # Migrations for older schemas
     if "chat_id" not in cols:
         cursor.execute("ALTER TABLE reminders ADD COLUMN chat_id TEXT")
-        conn.commit()
-
-    if "sent" not in cols:
-        cursor.execute("ALTER TABLE reminders ADD COLUMN sent INTEGER DEFAULT 0")
-        conn.commit()
-
-    if "due_at" not in cols:
-        cursor.execute("ALTER TABLE reminders ADD COLUMN due_at TEXT")
         conn.commit()
 
     if "text" not in cols:
         cursor.execute("ALTER TABLE reminders ADD COLUMN text TEXT")
         conn.commit()
 
+    if "due_at" not in cols:
+        cursor.execute("ALTER TABLE reminders ADD COLUMN due_at TEXT")
+        conn.commit()
+
+    if "timezone" not in cols:
+        cursor.execute("ALTER TABLE reminders ADD COLUMN timezone TEXT")
+        conn.commit()
+
+    if "due_local" not in cols:
+        cursor.execute("ALTER TABLE reminders ADD COLUMN due_local TEXT")
+        conn.commit()
+
+    if "sent" not in cols:
+        cursor.execute("ALTER TABLE reminders ADD COLUMN sent INTEGER DEFAULT 0")
+        conn.commit()
+
 
 _ensure_schema()
 
 
-def add_reminder(chat_id: int, text: str, due_at: str) -> None:
+def add_reminder(chat_id: int, text: str, due_at: str, timezone: str | None = None, due_local: str | None = None) -> None:
     """
-    Stores a reminder for a specific Telegram chat.
-    due_at must be an ISO8601 UTC timestamp string.
+    Store a reminder for a Telegram chat.
+
+    Parameters:
+      - chat_id: Telegram chat id
+      - text: reminder message
+      - due_at: UTC ISO string (naive), e.g. "2026-01-09T07:30:00"
+      - timezone: optional IANA timezone name (e.g. "Asia/Dubai")
+      - due_local: optional local display string (e.g. "2026-01-09 11:30 (Asia/Dubai)")
     """
     cursor.execute(
-        "INSERT INTO reminders (chat_id, text, due_at, sent) VALUES (?, ?, ?, 0)",
-        (str(chat_id), text, due_at),
+        "INSERT INTO reminders (chat_id, text, due_at, timezone, due_local, sent) VALUES (?, ?, ?, ?, ?, 0)",
+        (str(chat_id), text, due_at, timezone, due_local),
     )
     conn.commit()
 
@@ -85,14 +99,14 @@ def _send_telegram(chat_id: str, text: str) -> None:
 
     requests.post(
         f"{API_URL}/sendMessage",
-        json={"chat_id": int(chat_id), "text": f"⏰ Reminder: {text}"},
+        json={"chat_id": int(chat_id), "text": text},
         timeout=15,
     )
 
 
 def start_reminders() -> None:
     """
-    Polls for due reminders and delivers them to the relevant Telegram chat.
+    Polls due reminders and delivers them to the correct Telegram chat.
     """
     print("Reminder loop started")
 
@@ -100,20 +114,28 @@ def start_reminders() -> None:
         try:
             now = datetime.datetime.utcnow().isoformat()
 
-            # Skip rows that don't have chat_id populated (legacy rows)
             cursor.execute(
-                "SELECT id, chat_id, text FROM reminders "
+                "SELECT id, chat_id, text, due_local, timezone FROM reminders "
                 "WHERE sent = 0 AND due_at <= ? AND chat_id IS NOT NULL",
                 (now,),
             )
             rows = cursor.fetchall()
 
-            for reminder_id, chat_id, text in rows:
-                _send_telegram(chat_id, text)
+            for reminder_id, chat_id, text, due_local, timezone in rows:
+                # Prefer local display in the message if available
+                if due_local:
+                    msg = f"⏰ Reminder ({due_local}): {text}"
+                elif timezone:
+                    msg = f"⏰ Reminder ({timezone}): {text}"
+                else:
+                    msg = f"⏰ Reminder: {text}"
+
+                _send_telegram(chat_id, msg)
+
                 cursor.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
                 conn.commit()
 
         except Exception as e:
             print(f"[Reminder loop error] {e}")
 
-        time.sleep(1)
+        time.sleep(5)
