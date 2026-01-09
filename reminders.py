@@ -116,4 +116,4 @@ def start_reminders() -> None:
         except Exception as e:
             print(f"[Reminder loop error] {e}")
 
-        time.sleep(5)
+        time.sleep(1)

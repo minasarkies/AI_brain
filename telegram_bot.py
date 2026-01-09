@@ -172,4 +172,4 @@ def start_telegram() -> None:
         except Exception as e:
             print(f"[Telegram loop error] {e} | chat_id={chat_id} | user_text={repr(user_text)}")
 
-        time.sleep(0.5)
+        time.sleep(0.2)
