@@ -5,3 +5,5 @@ chromadb
 sqlite-utils
 python-dotenv
 requests
+dateparser
+timezonefinder
